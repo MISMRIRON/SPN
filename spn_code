@@ -1,0 +1,217 @@
+import urllib
+import math
+import importlib
+import tkinter as tk
+from tkinter.filedialog import askopenfilename
+from tkinter.scrolledtext import ScrolledText
+from tkinter import filedialog
+import pandas as pd
+import json
+
+
+def oc_rate(df,df_result):
+    height, width = df_result.shape
+    ##检索一套设备下
+    for i in range(0, height):
+        df_device = df[df['网元名称'].str.contains(df_result['网元名称'][i], case=False)]
+        df_device = df_device.drop_duplicates(['槽位号'], keep='first', ignore_index=True)
+        h, w = df_device.shape
+        rate = (h - 2) / 8
+        df_result.loc[i, '槽位利用率'] = rate
+    return df_result
+
+def free_card(df,df_result ):
+    height, width = df_result.shape
+    for i in range(0, height):
+        df_device = df[df['网元名称'].str.contains(df_result['网元名称'][i], case=False)]
+        df_device = df_device.reset_index(drop=True)
+        z=df_result['网元名称'][i]
+        msg=''
+        for j in range(0, 8):
+            count = 0
+            df_id = df_device[df_device['槽位ID'] == j+1]
+            df_id = df_id.reset_index(drop=True)
+            h2, w2 = df_id.shape
+            for k in range(0, h2):
+                if (df_id.loc[k, '输入光功率(dBm)'] == '/') or (df_id.loc[k, '输入光功率(dBm)'] == -60):
+                    count = count + 1
+                else:
+                    break
+            if count > 0:
+                x=df_id.loc[k, '输入光功率(dBm)']
+                y=df_id.loc[k, '单板名称']
+                msg = msg + str(j+1) + '-' + df_id.loc[k, '单板名称'] + ','
+        df_result.loc[i, '空闲板卡'] = msg
+    return df_result
+
+def no_op(df,df_result ):
+    height, width = df_result.shape
+    for i in range(0, height):
+        df_device = df[df['网元名称'].str.contains(df_result['网元名称'][i], case=False)]
+        df_device = df_device.reset_index(drop=True)
+        z=df_result['网元名称'][i]
+        msg=''
+        for j in range(0, 8):
+            count = 0
+            df_id = df_device[df_device['槽位ID'] == j+1]
+            df_id = df_id.reset_index(drop=True)
+            h2, w2 = df_id.shape
+            for k in range(0, h2):
+                if df_id.loc[k, '输入光功率(dBm)'] == '/':
+                    msg = msg + str(j+1) + '-' + df_id.loc[k, '单板名称'] +'-'+ str(k+1) +','
+        df_result.loc[i, '光模块不在位'] = msg
+    return df_result
+
+def free_op(df,df_result ):
+    height, width = df_result.shape
+    for i in range(0, height):
+        df_device = df[df['网元名称'].str.contains(df_result['网元名称'][i], case=False)]
+        df_device = df_device.reset_index(drop=True)
+        z=df_result['网元名称'][i]
+        msg=''
+        for j in range(0, 32):
+            count = 0
+            df_id = df_device[df_device['槽位ID'] == j+1]
+            df_id = df_id.reset_index(drop=True)
+            h2, w2 = df_id.shape
+            for k in range(0, h2):
+                if (df_id.loc[k, '输入下门限(dBm)'] == '-15') and ((df_id.loc[k, '输入光功率(dBm)'] == '-60') or(df_id.loc[k, '输入光功率(dBm)'] == '-40')):
+                    msg = msg + str(j+1) + '-' + df_id.loc[k, '单板名称'] +'-' + str(k+1) +','
+        df_result.loc[i, '光模块不在位'] = msg
+    return df_result
+
+
+def print_output(text):
+    scrolled_text.insert('end', text + '\n')
+def service_type(df,df_result):
+    height, width = df_result.shape
+    ##检索一套设备下
+    for i in range(0, height):
+        df_device = df[df['节点名称'].str.contains(df_result['节点名称'][i], case=False)]##过滤节点名称 为结果表第一行的业务
+        df_4G = df_device[(df_device['VLAN ID'] == '22')|(df_device['VLAN ID'] == '11')]##过滤VLAN_ID为22或11的业务，这些业务是4G业务
+        df_4G = df_4G.reset_index(drop=True)##过滤后索引重置
+        h1, w1 = df_4G.shape##获取4G业务的数量
+        df_result.loc[i, '4G业务数量'] = h1##赋值结果表，写入4G业务数量
+        df_5G = df_device[df_device['VLAN ID'] == '2']##过滤VLAN_ID为2的业务，这些业务是5G业务
+        df_5G = df_5G.reset_index(drop=True)##过滤后索引重置
+        h2, w2 = df_5G.shape##获取5G业务的数量
+        df_result.loc[i, '5G业务数量'] = h2##赋值结果表，写入5G业务数量
+    return df_result
+
+def guang_mk(power_df):
+    power_df.rename(columns={'输入基准值(dBm)': '是否在用'}, inplace=True)
+    power_df.rename(columns={'输入基准值时间': '光模块距离'}, inplace=True)
+    height, width = power_df.shape
+    for i in range(0, height):
+        if power_df.loc[i, '输入下门限(dBm)'] == '-' and power_df.loc[i, '输入光功率(dBm)'] == '/':
+            power_df.loc[i, '是否在用'] = '否'
+            power_df.loc[i, '光模块距离'] = '无法判断，原始数据问题'
+        elif power_df.loc[i, '输入下门限(dBm)'] == '-' and power_df.loc[i, '输入光功率(dBm)'] != '/':
+            power_df.loc[i, '是否在用'] = '是'
+            power_df.loc[i, '光模块距离'] = '无法判断，原始数据问题'
+        if power_df.loc[i, '输入下门限(dBm)'] != '-' and power_df.loc[i, '输入光功率(dBm)'] != '/':
+            if power_df.loc[i, '输入光功率(dBm)'] + 2 < power_df.loc[i, '输入下门限(dBm)']:
+                power_df.loc[i, '是否在用'] = '否'
+            else:
+                power_df.loc[i, '是否在用'] = '是'
+        if power_df.loc[i, '输出光功率(dBm)'] == '/':
+            power_df.loc[i, '光模块距离'] = '不在位'
+        elif power_df.loc[i, '输入下门限(dBm)'] != '-' and power_df.loc[i, '输出光功率(dBm)'] != '/':
+            if power_df.loc[i, '输出光功率(dBm)'] - power_df.loc[i, '输入下门限(dBm)'] > 22:
+                power_df.loc[i, '光模块距离'] = '80KM'
+            elif power_df.loc[i, '输出光功率(dBm)'] - power_df.loc[i, '输入下门限(dBm)'] > 14:
+                power_df.loc[i, '光模块距离'] = '40KM'
+            else:
+                power_df.loc[i, '光模块距离'] = '10KM'
+
+    final_df = power_df[['网元名称', '槽位ID', '单板名称', '端口', '是否在用', '光模块距离']]
+
+    return final_df
+
+def func_1():
+    ptn_path1 = filedialog.askopenfilename(title="选择端口表", filetypes=[("Excel Files", "*.xlsx")])
+    ptn_path2 = filedialog.askopenfilename(title="选择光功率报表", filetypes=[("Excel Files", "*.xlsx")])
+    ptn_path3 = filedialog.askopenfilename(title="选择业务报表", filetypes=[("ALl files", "*")])
+    print_output("读取端口表...")
+    df_prot = pd.read_excel(ptn_path1)#获取端口源表
+    print_output("读取光功率表...")
+    df_light = pd.read_excel(ptn_path2)
+    print_output("读取业务报表...")
+    df_service = pd.read_excel(ptn_path3)
+    height, width = df_prot.shape
+    ##初始化结果表
+    columns = ['网元名称', '槽位利用率','空闲板卡','光模块不在位']
+    df_result = pd.DataFrame(columns=columns)
+    ##筛选出980
+    df_prot = df_prot[df_prot['网元类型（主控类型）'].str.contains('970', case=False)]
+    df_prot = df_prot.sort_values(by='网元名称', ascending=True)
+    ##筛选出设备,准备好结果表
+    df_result = df_prot[['网元名称']].copy()
+    df_result = df_result.drop_duplicates(ignore_index=True)
+    ## = pd.concat([df_result, df_name], axis=1)
+
+    ##计算980端口占用率
+    print_output("输出980端口占用率...")
+    df_rate = oc_rate(df_prot,df_result)
+    ##df_rate.to_excel('result_oc_rate.xlsx')
+
+    ##计算980空闲板卡
+    print_output("输出空闲板卡...")
+    df_free = free_card(df_light,df_rate )
+    ##df_free.to_excel('result_free.xlsx')
+
+    ##计算980光模块不在位
+    print_output("光模块不在位...")
+    df_no_op = no_op(df_light, df_free)
+    df_no_op.to_excel('result_980.xlsx')
+
+    ##光功率巡检中
+    print_output("光功率巡检中...")
+    df_guang_mk = guang_mk(df_light)
+    df_guang_mk.to_excel('guangmk.xlsx')
+
+    ##计算长距离光模块
+    ##筛选出7900E
+    print_output("输出空闲长距离光模块...")
+    condition1 = df_light['输入光功率(dBm)'] == -60
+    condition2 = df_light['输入光功率(dBm)'] == -40
+    condition3 = df_light['输入下门限(dBm)'] == -15
+    df_79_r=df_light[((condition1)|(condition2))&(condition3)]
+    df_79_r.to_excel('result_7900E.xlsx')
+
+    ##计算重载spn
+    print_output("输出重载spn...")
+    columns = ['节点名称', '4G业务数量', '5G业务数量']
+    df_result1 = pd.DataFrame(columns=columns)
+    ##筛选出设备,准备好结果表
+    df_result1 = df_service[['节点名称']].copy()
+    df_result1 = df_result1.drop_duplicates(ignore_index=True)
+
+    df_result1 = service_type(df_service, df_result1)  ##运行4G5G业务统计程序
+    df_result1.to_excel('heavy service.xlsx')  ##输出结果表格
+
+
+    print_output("输出完成...")
+    return 0
+def exit_app():
+    root.destroy()
+
+
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+    root = tk.Tk()
+    root.title("SPN健康度巡检工具")
+    root.geometry("400x400")
+
+    open_button1 = tk.Button(root, text="计算SPN健康度", command = func_1)
+    open_button1.pack(padx=10, pady=10)
+    open_button2 = tk.Button(root, text="退出", command=exit_app)
+    open_button2.pack(padx=10, pady=10)
+    # 创建一个滚动文本框来显示输出内容
+    scrolled_text = ScrolledText(root)
+    scrolled_text.pack(expand=True, fill='both')
+    root.mainloop()
+
+
+
+
